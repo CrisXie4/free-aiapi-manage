@@ -1,0 +1,16 @@
+{
+  "name": "free-ai-api-control",
+  "version": "1.0.0",
+  "description": "公益站API管理系统",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["api", "management", "dashboard"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
