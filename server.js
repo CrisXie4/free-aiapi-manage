@@ -11,6 +11,11 @@ const PORT = 3000;
 app.use(express.json());
 app.use(express.static('public'));
 
+// 根路径重定向到主页
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // 数据文件路径
 const DATA_FILE = path.join(__dirname, 'data.json');
 
