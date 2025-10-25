@@ -17,27 +17,69 @@ app.get('/', (req, res) => {
 });
 
 // 数据文件路径
-const DATA_FILE = path.join(__dirname, 'data.json');
+// 支持环境变量配置，Lambda环境使用/tmp目录，否则使用当前目录
+const getDataFilePath = () => {
+  // 优先使用环境变量
+  if (process.env.DATA_FILE_PATH) {
+    return process.env.DATA_FILE_PATH;
+  }
+
+  // 检测是否在Lambda环境中（/var/task是只读的）
+  if (__dirname.startsWith('/var/task')) {
+    return '/tmp/data.json';
+  }
+
+  // 默认使用当前目录
+  return path.join(__dirname, 'data.json');
+};
+
+const DATA_FILE = getDataFilePath();
 
 // 初始化数据文件
 function initDataFile() {
-  if (!fs.existsSync(DATA_FILE)) {
-    const initialData = {
-      sites: []
-    };
-    fs.writeFileSync(DATA_FILE, JSON.stringify(initialData, null, 2));
+  try {
+    if (!fs.existsSync(DATA_FILE)) {
+      const initialData = {
+        sites: []
+      };
+      fs.writeFileSync(DATA_FILE, JSON.stringify(initialData, null, 2));
+      console.log(`[初始化] 数据文件已创建: ${DATA_FILE}`);
+    } else {
+      console.log(`[初始化] 使用现有数据文件: ${DATA_FILE}`);
+    }
+  } catch (error) {
+    console.error(`[初始化] 创建数据文件失败: ${error.message}`);
+    console.error(`[初始化] 数据文件路径: ${DATA_FILE}`);
+    // 在Lambda环境中，如果无法创建文件，我们仍然继续运行
+    // 但需要确保读取操作能够处理文件不存在的情况
   }
 }
 
 // 读取数据
 function readData() {
-  const data = fs.readFileSync(DATA_FILE, 'utf8');
-  return JSON.parse(data);
+  try {
+    if (!fs.existsSync(DATA_FILE)) {
+      console.warn(`[读取] 数据文件不存在，返回空数据: ${DATA_FILE}`);
+      return { sites: [] };
+    }
+    const data = fs.readFileSync(DATA_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error(`[读取] 读取数据文件失败: ${error.message}`);
+    return { sites: [] };
+  }
 }
 
 // 写入数据
 function writeData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+    console.log(`[写入] 数据已保存: ${DATA_FILE}`);
+  } catch (error) {
+    console.error(`[写入] 写入数据文件失败: ${error.message}`);
+    console.error(`[写入] 数据文件路径: ${DATA_FILE}`);
+    throw error; // 抛出错误，让调用者知道保存失败
+  }
 }
 
 // API路由
