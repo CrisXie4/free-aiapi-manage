@@ -5,7 +5,7 @@ const https = require('https');
 const http = require('http');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
-const mysql = require('mysql2/promise');
+const crypto = require('crypto');
 
 const app = express();
 
@@ -15,28 +15,14 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 15000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'your-secret-key-change-in-production';
 
-// MySQL 配置
-const DB_HOST = process.env.DB_HOST || 'localhost';
-const DB_PORT = process.env.DB_PORT || 3306;
-const DB_USER = process.env.DB_USER || 'root';
-const DB_PASSWORD = process.env.DB_PASSWORD || '';
-const DB_NAME = process.env.DB_NAME || 'free_ai_api_control';
+// 数据目录
+const DATA_DIR = path.join(__dirname, 'user_data');
 
-// 管理员账户配置（从环境变量读取）
-const ADMIN_USERNAME = process.env.NAME || 'admin';
-const ADMIN_PASSWORD = process.env.PASSWD || 'admin123';
-
-// 创建 MySQL 连接池
-const pool = mysql.createPool({
-  host: DB_HOST,
-  port: DB_PORT,
-  user: DB_USER,
-  password: DB_PASSWORD,
-  database: DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+// 确保数据目录存在
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  console.log(`[初始化] 创建数据目录: ${DATA_DIR}`);
+}
 
 // Session 配置
 app.use(session({
@@ -54,47 +40,43 @@ app.use(session({
 app.use(express.json());
 app.use(express.static('public'));
 
-// 数据库初始化
-async function initDatabase() {
+// 根据密码生成文件名（使用 SHA256 hash）
+function getDataFileForPassword(password) {
+  const hash = crypto.createHash('sha256').update(password).digest('hex');
+  return path.join(DATA_DIR, `data_${hash}.json`);
+}
+
+// 检查密码对应的数据文件是否存在
+function passwordExists(password) {
+  const filePath = getDataFileForPassword(password);
+  return fs.existsSync(filePath);
+}
+
+// 创建新的数据文件
+function createDataFileForPassword(password) {
+  const filePath = getDataFileForPassword(password);
+  const initialData = {
+    sites: [],
+    createdAt: new Date().toISOString(),
+    passwordHash: bcrypt.hashSync(password, 10) // 保存密码 hash 用于验证
+  };
+  fs.writeFileSync(filePath, JSON.stringify(initialData, null, 2));
+  console.log(`[账户] 创建新账户，数据文件: ${path.basename(filePath)}`);
+  return filePath;
+}
+
+// 验证密码
+function verifyPassword(password, filePath) {
   try {
-    console.log('[数据库] 开始初始化...');
-
-    // 创建用户表
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_username (username)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
-    console.log('[数据库] 用户表创建成功');
-
-    // 检查是否存在管理员账户
-    const [rows] = await pool.execute(
-      'SELECT id FROM users WHERE username = ?',
-      [ADMIN_USERNAME]
-    );
-
-    if (rows.length === 0) {
-      // 创建管理员账户
-      const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, 10);
-      await pool.execute(
-        'INSERT INTO users (username, password) VALUES (?, ?)',
-        [ADMIN_USERNAME, hashedPassword]
-      );
-      console.log(`[数据库] 管理员账户创建成功: ${ADMIN_USERNAME}`);
-    } else {
-      console.log(`[数据库] 管理员账户已存在: ${ADMIN_USERNAME}`);
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (data.passwordHash) {
+      return bcrypt.compareSync(password, data.passwordHash);
     }
-
-    console.log('[数据库] 初始化完成');
+    // 旧数据文件可能没有 passwordHash，直接返回 true
+    return true;
   } catch (error) {
-    console.error('[数据库] 初始化失败:', error.message);
-    throw error;
+    console.error('[验证] 密码验证失败:', error);
+    return false;
   }
 }
 
@@ -111,112 +93,54 @@ function requireAuth(req, res, next) {
   res.status(401).json({ error: '未授权访问，请先登录' });
 }
 
-// 登录 API
+// 登录 API（如果密码不存在则自动创建账户）
 app.post('/api/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { password } = req.body;
 
-    if (!username || !password) {
-      return res.status(400).json({ error: '请输入用户名和密码' });
-    }
-
-    // 从数据库查询用户
-    const [rows] = await pool.execute(
-      'SELECT id, username, password FROM users WHERE username = ?',
-      [username]
-    );
-
-    if (rows.length === 0) {
-      console.log(`[认证] 登录失败 - 用户不存在: ${username}`);
-      return res.status(401).json({ error: '用户名或密码错误' });
-    }
-
-    const user = rows[0];
-
-    // 验证密码
-    const passwordMatch = await bcrypt.compare(password, user.password);
-
-    if (!passwordMatch) {
-      console.log(`[认证] 登录失败 - 密码错误: ${username}`);
-      return res.status(401).json({ error: '用户名或密码错误' });
-    }
-
-    // 登录成功，设置 session
-    req.session.isAuthenticated = true;
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    req.session.loginTime = new Date().toISOString();
-
-    console.log(`[认证] 登录成功 - 用户: ${username}`);
-    res.json({
-      success: true,
-      message: '登录成功',
-      user: {
-        id: user.id,
-        username: user.username
-      }
-    });
-  } catch (error) {
-    console.error(`[认证] 登录错误:`, error);
-    res.status(500).json({ error: '登录失败，请稍后重试' });
-  }
-});
-
-// 注册 API
-app.post('/api/register', async (req, res) => {
-  try {
-    const { username, password, confirmPassword } = req.body;
-
-    // 验证输入
-    if (!username || !password || !confirmPassword) {
-      return res.status(400).json({ error: '请填写所有字段' });
-    }
-
-    if (password !== confirmPassword) {
-      return res.status(400).json({ error: '两次输入的密码不一致' });
-    }
-
-    if (username.length < 3 || username.length > 50) {
-      return res.status(400).json({ error: '用户名长度应在 3-50 个字符之间' });
+    if (!password) {
+      return res.status(400).json({ error: '请输入密码' });
     }
 
     if (password.length < 6) {
       return res.status(400).json({ error: '密码长度至少为 6 个字符' });
     }
 
-    // 检查用户名是否已存在
-    const [existingUsers] = await pool.execute(
-      'SELECT id FROM users WHERE username = ?',
-      [username]
-    );
+    let dataFile;
+    let isNewAccount = false;
 
-    if (existingUsers.length > 0) {
-      console.log(`[注册] 失败 - 用户名已存在: ${username}`);
-      return res.status(400).json({ error: '用户名已存在' });
+    // 检查密码对应的数据文件是否存在
+    if (passwordExists(password)) {
+      // 密码存在，读取数据
+      dataFile = getDataFileForPassword(password);
+
+      // 验证密码
+      if (!verifyPassword(password, dataFile)) {
+        console.log(`[登录] 密码验证失败`);
+        return res.status(401).json({ error: '密码错误' });
+      }
+
+      console.log(`[登录] 登录成功 - 数据文件: ${path.basename(dataFile)}`);
+    } else {
+      // 密码不存在，创建新账户
+      dataFile = createDataFileForPassword(password);
+      isNewAccount = true;
+      console.log(`[登录] 创建新账户 - 数据文件: ${path.basename(dataFile)}`);
     }
 
-    // 加密密码
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // 插入新用户
-    const [result] = await pool.execute(
-      'INSERT INTO users (username, password) VALUES (?, ?)',
-      [username, hashedPassword]
-    );
-
-    console.log(`[注册] 成功 - 新用户: ${username}`);
+    // 设置 session
+    req.session.isAuthenticated = true;
+    req.session.dataFile = dataFile;
+    req.session.loginTime = new Date().toISOString();
 
     res.json({
       success: true,
-      message: '注册成功',
-      user: {
-        id: result.insertId,
-        username: username
-      }
+      message: isNewAccount ? '账户创建成功，欢迎使用！' : '登录成功',
+      isNewAccount: isNewAccount
     });
   } catch (error) {
-    console.error(`[注册] 错误:`, error);
-    res.status(500).json({ error: '注册失败，请稍后重试' });
+    console.error(`[登录] 错误:`, error);
+    res.status(500).json({ error: '登录失败，请稍后重试' });
   }
 });
 
@@ -237,80 +161,66 @@ app.get('/api/auth/check', (req, res) => {
   if (req.session && req.session.isAuthenticated) {
     res.json({
       authenticated: true,
-      user: {
-        id: req.session.userId,
-        username: req.session.username,
-        loginTime: req.session.loginTime
-      }
+      loginTime: req.session.loginTime
     });
   } else {
     res.json({ authenticated: false });
   }
 });
 
-// 数据文件路径
-// 支持环境变量配置，Lambda环境使用/tmp目录，否则使用当前目录
-const getDataFilePath = () => {
-  // 优先使用环境变量
-  if (process.env.DATA_FILE_PATH) {
-    return process.env.DATA_FILE_PATH;
-  }
-
-  // 检测是否在Lambda环境中（/var/task是只读的）
-  if (__dirname.startsWith('/var/task')) {
-    return '/tmp/data.json';
-  }
-
-  // 默认使用当前目录
-  return path.join(__dirname, 'data.json');
-};
-
-const DATA_FILE = getDataFilePath();
-
-// 初始化数据文件
-function initDataFile() {
+// 读取数据（从用户的数据文件）
+function readData(dataFile) {
   try {
-    if (!fs.existsSync(DATA_FILE)) {
-      const initialData = {
-        sites: []
-      };
-      fs.writeFileSync(DATA_FILE, JSON.stringify(initialData, null, 2));
-      console.log(`[初始化] 数据文件已创建: ${DATA_FILE}`);
-    } else {
-      console.log(`[初始化] 使用现有数据文件: ${DATA_FILE}`);
-    }
-  } catch (error) {
-    console.error(`[初始化] 创建数据文件失败: ${error.message}`);
-    console.error(`[初始化] 数据文件路径: ${DATA_FILE}`);
-    // 在Lambda环境中，如果无法创建文件，我们仍然继续运行
-    // 但需要确保读取操作能够处理文件不存在的情况
-  }
-}
-
-// 读取数据
-function readData() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) {
-      console.warn(`[读取] 数据文件不存在，返回空数据: ${DATA_FILE}`);
+    if (!dataFile) {
+      console.error('[读取] 数据文件路径未指定');
       return { sites: [] };
     }
-    const data = fs.readFileSync(DATA_FILE, 'utf8');
-    return JSON.parse(data);
+
+    if (!fs.existsSync(dataFile)) {
+      console.warn(`[读取] 数据文件不存在，返回空数据: ${path.basename(dataFile)}`);
+      return { sites: [] };
+    }
+
+    const data = fs.readFileSync(dataFile, 'utf8');
+    const jsonData = JSON.parse(data);
+
+    // 只返回 sites 数组，不包含密码等敏感信息
+    return {
+      sites: jsonData.sites || []
+    };
   } catch (error) {
     console.error(`[读取] 读取数据文件失败: ${error.message}`);
     return { sites: [] };
   }
 }
 
-// 写入数据
-function writeData(data) {
+// 写入数据（到用户的数据文件）
+function writeData(dataFile, newData) {
   try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-    console.log(`[写入] 数据已保存: ${DATA_FILE}`);
+    if (!dataFile) {
+      throw new Error('数据文件路径未指定');
+    }
+
+    // 读取现有数据（包含 passwordHash 等信息）
+    let fullData = { sites: [] };
+    if (fs.existsSync(dataFile)) {
+      try {
+        fullData = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+      } catch (e) {
+        console.warn('[写入] 读取现有数据失败，将创建新文件');
+      }
+    }
+
+    // 更新 sites 数据，保留其他字段
+    fullData.sites = newData.sites || [];
+    fullData.updatedAt = new Date().toISOString();
+
+    fs.writeFileSync(dataFile, JSON.stringify(fullData, null, 2));
+    console.log(`[写入] 数据已保存: ${path.basename(dataFile)}`);
   } catch (error) {
     console.error(`[写入] 写入数据文件失败: ${error.message}`);
-    console.error(`[写入] 数据文件路径: ${DATA_FILE}`);
-    throw error; // 抛出错误，让调用者知道保存失败
+    console.error(`[写入] 数据文件路径: ${dataFile}`);
+    throw error;
   }
 }
 
@@ -319,7 +229,7 @@ function writeData(data) {
 // 获取所有公益站（需要认证）
 app.get('/api/sites', requireAuth, (req, res) => {
   try {
-    const data = readData();
+    const data = readData(req.session.dataFile);
     res.json(data.sites);
   } catch (error) {
     res.status(500).json({ error: '读取数据失败' });
@@ -329,7 +239,7 @@ app.get('/api/sites', requireAuth, (req, res) => {
 // 获取统计数据（需要认证）
 app.get('/api/stats', requireAuth, (req, res) => {
   try {
-    const data = readData();
+    const data = readData(req.session.dataFile);
     const sites = data.sites;
 
     const stats = {
@@ -349,7 +259,7 @@ app.get('/api/stats', requireAuth, (req, res) => {
 // 添加公益站（需要认证）
 app.post('/api/sites', requireAuth, (req, res) => {
   try {
-    const data = readData();
+    const data = readData(req.session.dataFile);
     const newSite = {
       id: Date.now().toString(),
       name: req.body.name,
@@ -362,7 +272,7 @@ app.post('/api/sites', requireAuth, (req, res) => {
     };
 
     data.sites.push(newSite);
-    writeData(data);
+    writeData(req.session.dataFile, data);
 
     res.json({ success: true, site: newSite });
   } catch (error) {
@@ -373,7 +283,7 @@ app.post('/api/sites', requireAuth, (req, res) => {
 // 更新公益站（需要认证）
 app.put('/api/sites/:id', requireAuth, (req, res) => {
   try {
-    const data = readData();
+    const data = readData(req.session.dataFile);
     const siteIndex = data.sites.findIndex(s => s.id === req.params.id);
 
     if (siteIndex === -1) {
@@ -390,7 +300,7 @@ app.put('/api/sites/:id', requireAuth, (req, res) => {
       lastChecked: new Date().toISOString()
     };
 
-    writeData(data);
+    writeData(req.session.dataFile, data);
     res.json({ success: true, site: data.sites[siteIndex] });
   } catch (error) {
     res.status(500).json({ error: '更新公益站失败' });
@@ -400,9 +310,9 @@ app.put('/api/sites/:id', requireAuth, (req, res) => {
 // 删除公益站（需要认证）
 app.delete('/api/sites/:id', requireAuth, (req, res) => {
   try {
-    const data = readData();
+    const data = readData(req.session.dataFile);
     data.sites = data.sites.filter(s => s.id !== req.params.id);
-    writeData(data);
+    writeData(req.session.dataFile, data);
 
     res.json({ success: true });
   } catch (error) {
@@ -413,7 +323,7 @@ app.delete('/api/sites/:id', requireAuth, (req, res) => {
 // 检查单个站点余额（需要认证）
 app.post('/api/sites/:id/check-balance', requireAuth, async (req, res) => {
   try {
-    const data = readData();
+    const data = readData(req.session.dataFile);
     const site = data.sites.find(s => s.id === req.params.id);
 
     if (!site) {
@@ -429,7 +339,7 @@ app.post('/api/sites/:id/check-balance', requireAuth, async (req, res) => {
     data.sites[siteIndex].models = balanceData.models;
     data.sites[siteIndex].lastChecked = new Date().toISOString();
 
-    writeData(data);
+    writeData(req.session.dataFile, data);
 
     res.json({
       success: true,
@@ -444,9 +354,9 @@ app.post('/api/sites/:id/check-balance', requireAuth, async (req, res) => {
 });
 
 // 批量检查所有站点余额
-app.post('/api/sites/check-all-balances', async (req, res) => {
+app.post('/api/sites/check-all-balances', requireAuth, async (req, res) => {
   try {
-    const data = readData();
+    const data = readData(req.session.dataFile);
     const results = [];
 
     for (const site of data.sites) {
@@ -476,7 +386,7 @@ app.post('/api/sites/check-all-balances', async (req, res) => {
       }
     }
 
-    writeData(data);
+    writeData(req.session.dataFile, data);
     res.json({ success: true, results });
   } catch (error) {
     res.status(500).json({ error: '批量检查失败' });
@@ -652,30 +562,13 @@ function fetchModels(baseUrl, apiKey) {
 }
 
 // 启动服务器
-async function startServer() {
-  try {
-    // 初始化数据库
-    await initDatabase();
-
-    // 初始化数据文件
-    initDataFile();
-
-    // 启动服务器
-    app.listen(PORT, () => {
-      console.log('='.repeat(60));
-      console.log(`公益站API管理系统`);
-      console.log(`环境: ${NODE_ENV}`);
-      console.log(`端口: ${PORT}`);
-      console.log(`数据文件: ${DATA_FILE}`);
-      console.log(`数据库: ${DB_HOST}:${DB_PORT}/${DB_NAME}`);
-      console.log(`访问地址: http://localhost:${PORT}`);
-      console.log('='.repeat(60));
-    });
-  } catch (error) {
-    console.error('[启动] 服务器启动失败:', error);
-    process.exit(1);
-  }
-}
-
-// 启动应用
-startServer();
+app.listen(PORT, () => {
+  console.log('='.repeat(60));
+  console.log(`公益站API管理系统`);
+  console.log(`环境: ${NODE_ENV}`);
+  console.log(`端口: ${PORT}`);
+  console.log(`数据目录: ${DATA_DIR}`);
+  console.log(`访问地址: http://localhost:${PORT}`);
+  console.log('='.repeat(60));
+  console.log('[提示] 输入任意密码即可登录，新密码将自动创建账户');
+});

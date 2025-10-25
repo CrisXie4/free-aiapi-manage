@@ -28,12 +28,7 @@ async function checkAuth() {
 
 // 更新用户信息显示
 function updateUserInfo() {
-    if (currentUser) {
-        const userInfoEl = document.getElementById('user-info');
-        if (userInfoEl) {
-            userInfoEl.textContent = `欢迎, ${currentUser.username}`;
-        }
-    }
+    // 不显示用户信息，因为使用密码登录没有用户名
 }
 
 // 登出
