@@ -3,6 +3,52 @@ let sites = [];
 let currentEditId = null;
 let currentUser = null;
 
+// ========== 全局函数（需要在 HTML 中调用） ==========
+
+// 登出
+function logout() {
+    if (confirm('确定要退出登录吗？')) {
+        fetch('/api/logout', {
+            method: 'POST'
+        })
+        .then(response => {
+            if (response.ok) {
+                window.location.href = '/login.html';
+            } else {
+                alert('登出失败，请稍后重试');
+            }
+        })
+        .catch(error => {
+            console.error('登出失败:', error);
+            alert('登出失败，请稍后重试');
+        });
+    }
+}
+
+// 显示捐赠模态框
+function showDonateModal() {
+    document.getElementById('donateModal').style.display = 'block';
+}
+
+// 关闭捐赠模态框
+function closeDonateModal() {
+    document.getElementById('donateModal').style.display = 'none';
+}
+
+// 显示修改密码模态框
+function showChangePasswordModal() {
+    document.getElementById('changePasswordModal').style.display = 'block';
+    document.getElementById('changePasswordForm').reset();
+}
+
+// 关闭修改密码模态框
+function closeChangePasswordModal() {
+    document.getElementById('changePasswordModal').style.display = 'none';
+    document.getElementById('changePasswordForm').reset();
+}
+
+// ========== 内部函数 ==========
+
 // 检查登录状态
 async function checkAuth() {
     try {
@@ -30,44 +76,6 @@ async function checkAuth() {
 function updateUserInfo() {
     // 不显示用户信息，因为使用密码登录没有用户名
 }
-
-// 登出
-async function logout() {
-    if (confirm('确定要退出登录吗？')) {
-        try {
-            const response = await fetch('/api/logout', {
-                method: 'POST'
-            });
-
-            if (response.ok) {
-                window.location.href = '/login.html';
-            } else {
-                alert('登出失败，请稍后重试');
-            }
-        } catch (error) {
-            console.error('登出失败:', error);
-            alert('登出失败，请稍后重试');
-        }
-    }
-}
-
-// 显示捐赠模态框
-function showDonateModal() {
-    document.getElementById('donateModal').style.display = 'block';
-}
-
-// 关闭捐赠模态框
-function closeDonateModal() {
-    document.getElementById('donateModal').style.display = 'none';
-}
-
-// 点击模态框外部关闭
-window.addEventListener('click', (event) => {
-    const donateModal = document.getElementById('donateModal');
-    if (event.target === donateModal) {
-        closeDonateModal();
-    }
-});
 
 // DOM元素
 const modal = document.getElementById('siteModal');
@@ -99,12 +107,86 @@ function setupEventListeners() {
     checkAllBalancesBtn.addEventListener('click', checkAllBalances);
     siteForm.addEventListener('submit', handleSubmit);
 
+    // 修改密码表单提交
+    const changePasswordForm = document.getElementById('changePasswordForm');
+    if (changePasswordForm) {
+        changePasswordForm.addEventListener('submit', handleChangePassword);
+    }
+
     // 点击模态框外部关闭
     window.addEventListener('click', (e) => {
         if (e.target === modal) {
             closeModal();
         }
+        // 捐赠模态框
+        const donateModal = document.getElementById('donateModal');
+        if (e.target === donateModal) {
+            closeDonateModal();
+        }
+        // 修改密码模态框
+        const changePasswordModal = document.getElementById('changePasswordModal');
+        if (e.target === changePasswordModal) {
+            closeChangePasswordModal();
+        }
     });
+}
+
+// 处理修改密码
+async function handleChangePassword(e) {
+    e.preventDefault();
+
+    const oldPassword = document.getElementById('oldPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmNewPassword = document.getElementById('confirmNewPassword').value;
+
+    // 验证输入
+    if (!oldPassword || !newPassword || !confirmNewPassword) {
+        alert('请填写所有字段');
+        return;
+    }
+
+    if (newPassword.length < 6) {
+        alert('新密码长度至少为 6 个字符');
+        return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+        alert('两次输入的新密码不一致');
+        return;
+    }
+
+    if (oldPassword === newPassword) {
+        alert('新密码不能与旧密码相同');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/change-password', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                oldPassword,
+                newPassword
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert('密码修改成功！请使用新密码重新登录');
+            closeChangePasswordModal();
+            // 登出并跳转到登录页
+            await fetch('/api/logout', { method: 'POST' });
+            window.location.href = '/login.html';
+        } else {
+            alert(data.error || '密码修改失败');
+        }
+    } catch (error) {
+        console.error('修改密码失败:', error);
+        alert('修改密码失败，请稍后重试');
+    }
 }
 
 // 加载数据

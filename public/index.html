@@ -13,6 +13,7 @@
             <h1>公益站API管理系统</h1>
             <div class="header-actions">
                 <button onclick="showDonateModal()" class="btn" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); margin-right: 10px;">❤️ 捐赠支持</button>
+                <button onclick="showChangePasswordModal()" class="btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin-right: 10px;">🔑 修改密码</button>
                 <button onclick="logout()" class="btn btn-secondary" style="margin-right: 10px;">登出</button>
                 <button id="checkAllBalancesBtn" class="btn btn-success">🔄 检查所有余额</button>
                 <button id="refreshBtn" class="btn btn-secondary">刷新数据</button>
@@ -150,6 +151,50 @@
             <p style="text-align: center; margin-top: 30px; color: #999; font-size: 14px;">
                 感谢您的支持！🙏
             </p>
+        </div>
+    </div>
+
+    <!-- 修改密码模态框 -->
+    <div id="changePasswordModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <span class="close" onclick="closeChangePasswordModal()">&times;</span>
+            <h2 style="margin-bottom: 20px;">🔑 修改密码</h2>
+            <form id="changePasswordForm">
+                <div class="form-group">
+                    <label for="oldPassword">当前密码</label>
+                    <input
+                        type="password"
+                        id="oldPassword"
+                        required
+                        placeholder="请输入当前密码"
+                        autocomplete="current-password"
+                    />
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">新密码</label>
+                    <input
+                        type="password"
+                        id="newPassword"
+                        required
+                        placeholder="请输入新密码（至少6个字符）"
+                        autocomplete="new-password"
+                    />
+                </div>
+                <div class="form-group">
+                    <label for="confirmNewPassword">确认新密码</label>
+                    <input
+                        type="password"
+                        id="confirmNewPassword"
+                        required
+                        placeholder="请再次输入新密码"
+                        autocomplete="new-password"
+                    />
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeChangePasswordModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">确认修改</button>
+                </div>
+            </form>
         </div>
     </div>
 

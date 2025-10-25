@@ -168,6 +168,73 @@ app.get('/api/auth/check', (req, res) => {
   }
 });
 
+// 修改密码 API
+app.post('/api/change-password', requireAuth, async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ error: '请输入旧密码和新密码' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: '新密码长度至少为 6 个字符' });
+    }
+
+    if (oldPassword === newPassword) {
+      return res.status(400).json({ error: '新密码不能与旧密码相同' });
+    }
+
+    // 验证旧密码
+    const oldDataFile = req.session.dataFile;
+    if (!verifyPassword(oldPassword, oldDataFile)) {
+      return res.status(401).json({ error: '当前密码错误' });
+    }
+
+    // 读取旧数据文件的数据
+    const oldData = JSON.parse(fs.readFileSync(oldDataFile, 'utf8'));
+
+    // 创建新的数据文件
+    const newDataFile = getDataFileForPassword(newPassword);
+
+    // 检查新密码是否已被使用
+    if (fs.existsSync(newDataFile)) {
+      return res.status(400).json({ error: '新密码已被其他账户使用，请选择其他密码' });
+    }
+
+    // 将数据复制到新文件
+    const newData = {
+      sites: oldData.sites || [],
+      createdAt: oldData.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      passwordHash: bcrypt.hashSync(newPassword, 10)
+    };
+
+    fs.writeFileSync(newDataFile, JSON.stringify(newData, null, 2));
+    console.log(`[修改密码] 创建新数据文件: ${path.basename(newDataFile)}`);
+
+    // 删除旧数据文件
+    try {
+      fs.unlinkSync(oldDataFile);
+      console.log(`[修改密码] 删除旧数据文件: ${path.basename(oldDataFile)}`);
+    } catch (error) {
+      console.warn(`[修改密码] 无法删除旧数据文件: ${error.message}`);
+    }
+
+    // 清除 session（强制重新登录）
+    req.session.destroy();
+
+    res.json({
+      success: true,
+      message: '密码修改成功，请使用新密码重新登录'
+    });
+
+  } catch (error) {
+    console.error('[修改密码] 错误:', error);
+    res.status(500).json({ error: '修改密码失败，请稍后重试' });
+  }
+});
+
 // 读取数据（从用户的数据文件）
 function readData(dataFile) {
   try {
