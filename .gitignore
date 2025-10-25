@@ -6,11 +6,13 @@ yarn-error.log*
 
 # 数据文件（包含敏感API密钥）
 data.json
+data/
 
 # 环境变量
 .env
 .env.local
 .env.production
+.env.*.local
 
 # 日志文件
 *.log
@@ -29,7 +31,24 @@ Thumbs.db
 
 # PM2
 .pm2/
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Docker
+.docker/
+
+# Nginx 日志
+nginx/logs/
+
+# 备份文件
+*.backup
+*.bak
+*.old
 
 # 临时文件
 *.tmp
 .cache/
+tmp/
+temp/

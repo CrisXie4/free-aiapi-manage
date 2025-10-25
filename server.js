@@ -5,7 +5,11 @@ const https = require('https');
 const http = require('http');
 
 const app = express();
-const PORT = 3000;
+
+// 环境变量配置
+const PORT = process.env.PORT || 3000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 15000;
 
 // 中间件
 app.use(express.json());
@@ -274,7 +278,7 @@ function fetchTokenBalance(apiUrl, apiKey) {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0'
         },
-        timeout: 15000,
+        timeout: API_TIMEOUT,
         rejectUnauthorized: false // 允许自签名证书
       };
 
@@ -370,7 +374,7 @@ function fetchModels(baseUrl, apiKey) {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0'
         },
-        timeout: 15000,
+        timeout: API_TIMEOUT,
         rejectUnauthorized: false
       };
 
@@ -422,5 +426,11 @@ function fetchModels(baseUrl, apiKey) {
 // 启动服务器
 initDataFile();
 app.listen(PORT, () => {
-  console.log(`公益站API管理系统运行在 http://localhost:${PORT}`);
+  console.log('='.repeat(60));
+  console.log(`公益站API管理系统`);
+  console.log(`环境: ${NODE_ENV}`);
+  console.log(`端口: ${PORT}`);
+  console.log(`数据文件: ${DATA_FILE}`);
+  console.log(`访问地址: http://localhost:${PORT}`);
+  console.log('='.repeat(60));
 });
