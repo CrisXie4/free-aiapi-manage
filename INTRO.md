@@ -62,21 +62,7 @@
 
 ## 🚀 快速开始
 
-### 安装部署
-```bash
-# 克隆仓库
-git clone https://github.com/CrisXie4/free-aiapi-manage.git
-cd free-aiapi-manage
 
-# 安装依赖
-npm install
-
-# 启动服务
-npm start
-
-# 访问系统
-打开浏览器访问 http://localhost:3000
-```
 
 ### 使用指南
 

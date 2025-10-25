@@ -3,6 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
+const session = require('express-session');
+const bcrypt = require('bcrypt');
+const mysql = require('mysql2/promise');
 
 const app = express();
 
@@ -10,14 +13,239 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 15000;
+const SESSION_SECRET = process.env.SESSION_SECRET || 'your-secret-key-change-in-production';
+
+// MySQL 配置
+const DB_HOST = process.env.DB_HOST || 'localhost';
+const DB_PORT = process.env.DB_PORT || 3306;
+const DB_USER = process.env.DB_USER || 'root';
+const DB_PASSWORD = process.env.DB_PASSWORD || '';
+const DB_NAME = process.env.DB_NAME || 'free_ai_api_control';
+
+// 管理员账户配置（从环境变量读取）
+const ADMIN_USERNAME = process.env.NAME || 'admin';
+const ADMIN_PASSWORD = process.env.PASSWD || 'admin123';
+
+// 创建 MySQL 连接池
+const pool = mysql.createPool({
+  host: DB_HOST,
+  port: DB_PORT,
+  user: DB_USER,
+  password: DB_PASSWORD,
+  database: DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+// Session 配置
+app.use(session({
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: NODE_ENV === 'production' && process.env.USE_HTTPS === 'true', // 生产环境且使用HTTPS时启用
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24小时
+  }
+}));
 
 // 中间件
 app.use(express.json());
 app.use(express.static('public'));
 
+// 数据库初始化
+async function initDatabase() {
+  try {
+    console.log('[数据库] 开始初始化...');
+
+    // 创建用户表
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_username (username)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    console.log('[数据库] 用户表创建成功');
+
+    // 检查是否存在管理员账户
+    const [rows] = await pool.execute(
+      'SELECT id FROM users WHERE username = ?',
+      [ADMIN_USERNAME]
+    );
+
+    if (rows.length === 0) {
+      // 创建管理员账户
+      const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, 10);
+      await pool.execute(
+        'INSERT INTO users (username, password) VALUES (?, ?)',
+        [ADMIN_USERNAME, hashedPassword]
+      );
+      console.log(`[数据库] 管理员账户创建成功: ${ADMIN_USERNAME}`);
+    } else {
+      console.log(`[数据库] 管理员账户已存在: ${ADMIN_USERNAME}`);
+    }
+
+    console.log('[数据库] 初始化完成');
+  } catch (error) {
+    console.error('[数据库] 初始化失败:', error.message);
+    throw error;
+  }
+}
+
 // 根路径重定向到主页
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// 认证中间件
+function requireAuth(req, res, next) {
+  if (req.session && req.session.isAuthenticated) {
+    return next();
+  }
+  res.status(401).json({ error: '未授权访问，请先登录' });
+}
+
+// 登录 API
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: '请输入用户名和密码' });
+    }
+
+    // 从数据库查询用户
+    const [rows] = await pool.execute(
+      'SELECT id, username, password FROM users WHERE username = ?',
+      [username]
+    );
+
+    if (rows.length === 0) {
+      console.log(`[认证] 登录失败 - 用户不存在: ${username}`);
+      return res.status(401).json({ error: '用户名或密码错误' });
+    }
+
+    const user = rows[0];
+
+    // 验证密码
+    const passwordMatch = await bcrypt.compare(password, user.password);
+
+    if (!passwordMatch) {
+      console.log(`[认证] 登录失败 - 密码错误: ${username}`);
+      return res.status(401).json({ error: '用户名或密码错误' });
+    }
+
+    // 登录成功，设置 session
+    req.session.isAuthenticated = true;
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.loginTime = new Date().toISOString();
+
+    console.log(`[认证] 登录成功 - 用户: ${username}`);
+    res.json({
+      success: true,
+      message: '登录成功',
+      user: {
+        id: user.id,
+        username: user.username
+      }
+    });
+  } catch (error) {
+    console.error(`[认证] 登录错误:`, error);
+    res.status(500).json({ error: '登录失败，请稍后重试' });
+  }
+});
+
+// 注册 API
+app.post('/api/register', async (req, res) => {
+  try {
+    const { username, password, confirmPassword } = req.body;
+
+    // 验证输入
+    if (!username || !password || !confirmPassword) {
+      return res.status(400).json({ error: '请填写所有字段' });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({ error: '两次输入的密码不一致' });
+    }
+
+    if (username.length < 3 || username.length > 50) {
+      return res.status(400).json({ error: '用户名长度应在 3-50 个字符之间' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: '密码长度至少为 6 个字符' });
+    }
+
+    // 检查用户名是否已存在
+    const [existingUsers] = await pool.execute(
+      'SELECT id FROM users WHERE username = ?',
+      [username]
+    );
+
+    if (existingUsers.length > 0) {
+      console.log(`[注册] 失败 - 用户名已存在: ${username}`);
+      return res.status(400).json({ error: '用户名已存在' });
+    }
+
+    // 加密密码
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 插入新用户
+    const [result] = await pool.execute(
+      'INSERT INTO users (username, password) VALUES (?, ?)',
+      [username, hashedPassword]
+    );
+
+    console.log(`[注册] 成功 - 新用户: ${username}`);
+
+    res.json({
+      success: true,
+      message: '注册成功',
+      user: {
+        id: result.insertId,
+        username: username
+      }
+    });
+  } catch (error) {
+    console.error(`[注册] 错误:`, error);
+    res.status(500).json({ error: '注册失败，请稍后重试' });
+  }
+});
+
+// 登出 API
+app.post('/api/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      console.error(`[认证] 登出错误:`, err);
+      return res.status(500).json({ error: '登出失败' });
+    }
+    console.log(`[认证] 登出成功`);
+    res.json({ success: true, message: '登出成功' });
+  });
+});
+
+// 检查登录状态 API
+app.get('/api/auth/check', (req, res) => {
+  if (req.session && req.session.isAuthenticated) {
+    res.json({
+      authenticated: true,
+      user: {
+        id: req.session.userId,
+        username: req.session.username,
+        loginTime: req.session.loginTime
+      }
+    });
+  } else {
+    res.json({ authenticated: false });
+  }
 });
 
 // 数据文件路径
@@ -88,8 +316,8 @@ function writeData(data) {
 
 // API路由
 
-// 获取所有公益站
-app.get('/api/sites', (req, res) => {
+// 获取所有公益站（需要认证）
+app.get('/api/sites', requireAuth, (req, res) => {
   try {
     const data = readData();
     res.json(data.sites);
@@ -98,8 +326,8 @@ app.get('/api/sites', (req, res) => {
   }
 });
 
-// 获取统计数据
-app.get('/api/stats', (req, res) => {
+// 获取统计数据（需要认证）
+app.get('/api/stats', requireAuth, (req, res) => {
   try {
     const data = readData();
     const sites = data.sites;
@@ -118,8 +346,8 @@ app.get('/api/stats', (req, res) => {
   }
 });
 
-// 添加公益站
-app.post('/api/sites', (req, res) => {
+// 添加公益站（需要认证）
+app.post('/api/sites', requireAuth, (req, res) => {
   try {
     const data = readData();
     const newSite = {
@@ -142,8 +370,8 @@ app.post('/api/sites', (req, res) => {
   }
 });
 
-// 更新公益站
-app.put('/api/sites/:id', (req, res) => {
+// 更新公益站（需要认证）
+app.put('/api/sites/:id', requireAuth, (req, res) => {
   try {
     const data = readData();
     const siteIndex = data.sites.findIndex(s => s.id === req.params.id);
@@ -169,8 +397,8 @@ app.put('/api/sites/:id', (req, res) => {
   }
 });
 
-// 删除公益站
-app.delete('/api/sites/:id', (req, res) => {
+// 删除公益站（需要认证）
+app.delete('/api/sites/:id', requireAuth, (req, res) => {
   try {
     const data = readData();
     data.sites = data.sites.filter(s => s.id !== req.params.id);
@@ -182,8 +410,8 @@ app.delete('/api/sites/:id', (req, res) => {
   }
 });
 
-// 检查单个站点余额
-app.post('/api/sites/:id/check-balance', async (req, res) => {
+// 检查单个站点余额（需要认证）
+app.post('/api/sites/:id/check-balance', requireAuth, async (req, res) => {
   try {
     const data = readData();
     const site = data.sites.find(s => s.id === req.params.id);
@@ -424,13 +652,30 @@ function fetchModels(baseUrl, apiKey) {
 }
 
 // 启动服务器
-initDataFile();
-app.listen(PORT, () => {
-  console.log('='.repeat(60));
-  console.log(`公益站API管理系统`);
-  console.log(`环境: ${NODE_ENV}`);
-  console.log(`端口: ${PORT}`);
-  console.log(`数据文件: ${DATA_FILE}`);
-  console.log(`访问地址: http://localhost:${PORT}`);
-  console.log('='.repeat(60));
-});
+async function startServer() {
+  try {
+    // 初始化数据库
+    await initDatabase();
+
+    // 初始化数据文件
+    initDataFile();
+
+    // 启动服务器
+    app.listen(PORT, () => {
+      console.log('='.repeat(60));
+      console.log(`公益站API管理系统`);
+      console.log(`环境: ${NODE_ENV}`);
+      console.log(`端口: ${PORT}`);
+      console.log(`数据文件: ${DATA_FILE}`);
+      console.log(`数据库: ${DB_HOST}:${DB_PORT}/${DB_NAME}`);
+      console.log(`访问地址: http://localhost:${PORT}`);
+      console.log('='.repeat(60));
+    });
+  } catch (error) {
+    console.error('[启动] 服务器启动失败:', error);
+    process.exit(1);
+  }
+}
+
+// 启动应用
+startServer();

@@ -1,6 +1,60 @@
 // 全局变量
 let sites = [];
 let currentEditId = null;
+let currentUser = null;
+
+// 检查登录状态
+async function checkAuth() {
+    try {
+        const response = await fetch('/api/auth/check');
+        const data = await response.json();
+
+        if (!data.authenticated) {
+            // 未登录，跳转到登录页
+            window.location.href = '/login.html';
+            return false;
+        }
+
+        // 已登录，保存用户信息
+        currentUser = data.user;
+        updateUserInfo();
+        return true;
+    } catch (error) {
+        console.error('检查登录状态失败:', error);
+        window.location.href = '/login.html';
+        return false;
+    }
+}
+
+// 更新用户信息显示
+function updateUserInfo() {
+    if (currentUser) {
+        const userInfoEl = document.getElementById('user-info');
+        if (userInfoEl) {
+            userInfoEl.textContent = `欢迎, ${currentUser.username}`;
+        }
+    }
+}
+
+// 登出
+async function logout() {
+    if (confirm('确定要退出登录吗？')) {
+        try {
+            const response = await fetch('/api/logout', {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                window.location.href = '/login.html';
+            } else {
+                alert('登出失败，请稍后重试');
+            }
+        } catch (error) {
+            console.error('登出失败:', error);
+            alert('登出失败，请稍后重试');
+        }
+    }
+}
 
 // DOM元素
 const modal = document.getElementById('siteModal');
@@ -14,9 +68,13 @@ const sitesTableBody = document.getElementById('sitesTableBody');
 const modalTitle = document.getElementById('modalTitle');
 
 // 页面加载时初始化
-document.addEventListener('DOMContentLoaded', () => {
-    loadData();
-    setupEventListeners();
+document.addEventListener('DOMContentLoaded', async () => {
+    // 先检查登录状态
+    const isAuthenticated = await checkAuth();
+    if (isAuthenticated) {
+        loadData();
+        setupEventListeners();
+    }
 });
 
 // 设置事件监听
