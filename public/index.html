@@ -12,6 +12,7 @@
         <header>
             <h1>公益站API管理系统</h1>
             <div class="header-actions">
+                <button onclick="showDonateModal()" class="btn" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); margin-right: 10px;">❤️ 捐赠支持</button>
                 <button onclick="logout()" class="btn btn-secondary" style="margin-right: 10px;">登出</button>
                 <button id="checkAllBalancesBtn" class="btn btn-success">🔄 检查所有余额</button>
                 <button id="refreshBtn" class="btn btn-secondary">刷新数据</button>
@@ -125,6 +126,30 @@
                     <button type="submit" class="btn btn-primary">保存</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- 捐赠模态框 -->
+    <div id="donateModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 600px;">
+            <span class="close" onclick="closeDonateModal()">&times;</span>
+            <h2 style="text-align: center; margin-bottom: 20px;">❤️ 捐赠支持</h2>
+            <p style="text-align: center; color: #666; margin-bottom: 30px;">
+                如果这个工具对您有帮助，欢迎捐赠支持开发者！
+            </p>
+            <div style="display: flex; justify-content: space-around; flex-wrap: wrap; gap: 20px;">
+                <div style="text-align: center;">
+                    <h3 style="margin-bottom: 10px; color: #09bb07;">微信支付</h3>
+                    <img src="wechat-pay.jpg" alt="微信支付" style="max-width: 250px; border: 2px solid #09bb07; border-radius: 10px; padding: 10px; background: white;">
+                </div>
+                <div style="text-align: center;">
+                    <h3 style="margin-bottom: 10px; color: #1678ff;">支付宝</h3>
+                    <img src="alipay.png" alt="支付宝" style="max-width: 250px; border: 2px solid #1678ff; border-radius: 10px; padding: 10px; background: white;">
+                </div>
+            </div>
+            <p style="text-align: center; margin-top: 30px; color: #999; font-size: 14px;">
+                感谢您的支持！🙏
+            </p>
         </div>
     </div>
 

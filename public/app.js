@@ -51,6 +51,24 @@ async function logout() {
     }
 }
 
+// 显示捐赠模态框
+function showDonateModal() {
+    document.getElementById('donateModal').style.display = 'block';
+}
+
+// 关闭捐赠模态框
+function closeDonateModal() {
+    document.getElementById('donateModal').style.display = 'none';
+}
+
+// 点击模态框外部关闭
+window.addEventListener('click', (event) => {
+    const donateModal = document.getElementById('donateModal');
+    if (event.target === donateModal) {
+        closeDonateModal();
+    }
+});
+
 // DOM元素
 const modal = document.getElementById('siteModal');
 const addSiteBtn = document.getElementById('addSiteBtn');
